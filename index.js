@@ -1,41 +1,21 @@
 const express = require('express');
 const {
   Client,
-  GatewayIntentBits,
-  REST,
-  Routes
+  GatewayIntentBits
 } = require('discord.js');
 
 const app = express();
 app.use(express.json());
 
-// ==============================
-// 環境変数
-// ==============================
-
 const TOKEN = process.env.TOKEN?.trim();
 const FORUM_CHANNEL_ID = process.env.FORUM_CHANNEL_ID?.trim();
 
-if (!TOKEN) {
-  console.error('❌ TOKEN が設定されていません');
-}
-
-if (!FORUM_CHANNEL_ID) {
-  console.error('❌ FORUM_CHANNEL_ID が設定されていません');
-}
-
-// ==============================
-// Discord Client
-// ==============================
-
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds
-  ]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 // ==============================
-// Discordイベントログ
+// Discordイベント
 // ==============================
 
 client.once('ready', () => {
@@ -62,36 +42,27 @@ client.on('shardReady', (shardId) => {
   console.log(`✅ Discord Shard Ready: ${shardId}`);
 });
 
-client.on('shardDisconnect', (event, shardId) => {
-  console.error(
-    `❌ Discord Shard Disconnect: shard=${shardId}, code=${event.code}`
-  );
-});
-
-client.on('invalidated', () => {
-  console.error('❌ Discordセッションが無効化されました');
-});
-
 // ==============================
-// Render起動・Bot状態確認
+// Render起動確認
 // ==============================
 
 app.get('/', (req, res) => {
-  if (client.isReady()) {
-    res.status(200).send('Bot ready');
-  } else {
-    res.status(200).send('Server awake, Bot starting');
-  }
+  res.status(200).send(
+    client.isReady()
+      ? 'Bot ready'
+      : 'Server awake, Bot starting'
+  );
 });
 
 // ==============================
-// Discordフォーラム投稿
+// フォーラム投稿
 // ==============================
 
 app.post('/webhook', async (req, res) => {
   try {
+
     if (!client.isReady()) {
-      console.log('⚠️ 投稿要求を受信しましたがBotはまだ準備中です');
+      console.log('⚠️ Botはまだ準備中です');
       return res.status(503).send('Bot is starting');
     }
 
@@ -99,14 +70,10 @@ app.post('/webhook', async (req, res) => {
 
     console.log(`📨 投稿要求受信: ${title}`);
 
-    const channel = await client.channels.fetch(FORUM_CHANNEL_ID);
+    const channel =
+      await client.channels.fetch(FORUM_CHANNEL_ID);
 
-    if (!channel) {
-      console.error('❌ フォーラムチャンネルが見つかりません');
-      return res.status(404).send('Forum channel not found');
-    }
-
-    const thread = await channel.threads.create({
+    await channel.threads.create({
       name: title,
       message: {
         content: mention || '',
@@ -118,26 +85,26 @@ app.post('/webhook', async (req, res) => {
       }
     });
 
-    console.log(`✅ Discord投稿成功: ${thread.name}`);
+    console.log(`✅ 投稿成功: ${title}`);
 
     res.status(200).send('ok');
 
   } catch (error) {
-    console.error('❌ Discord投稿エラー:', error);
+
+    console.error('❌ 投稿エラー:', error);
+
     res.status(500).send('error');
   }
 });
 
 // ==============================
-// Render Web Server
+// Webサーバー
 // ==============================
 
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
-  console.log('================================');
   console.log(`✅ Webサーバー起動: port ${PORT}`);
-  console.log('================================');
 });
 
 // ==============================
@@ -145,54 +112,95 @@ app.listen(PORT, () => {
 // ==============================
 
 async function startDiscordBot() {
+
   console.log('🔍 Discord接続診断開始');
 
   if (!TOKEN) {
-    console.error('❌ TOKENがないためDiscordへ接続できません');
+    console.error('❌ TOKENが設定されていません');
     return;
   }
 
-  // ① REST APIでトークンが有効か確認
+  // 10秒で打ち切る
+  const controller = new AbortController();
+
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, 10000);
+
   try {
-    console.log('🔍 Botトークン認証確認中...');
 
-    const rest = new REST({
-      version: '10'
-    }).setToken(TOKEN);
+    console.log('🔍 Discord APIへ接続テスト中...');
 
-    const botUser = await rest.get(
-      Routes.user('@me')
+    const response = await fetch(
+      'https://discord.com/api/v10/users/@me',
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bot ${TOKEN}`
+        },
+        signal: controller.signal
+      }
     );
 
-    console.log(`✅ Botトークン認証成功: ${botUser.username}`);
-    console.log(`✅ Bot ID: ${botUser.id}`);
+    clearTimeout(timeout);
+
+    console.log(
+      `🔍 Discord API HTTPステータス: ${response.status}`
+    );
+
+    if (!response.ok) {
+
+      const text = await response.text();
+
+      console.error('❌ Discord API認証失敗');
+      console.error(text);
+
+      return;
+    }
+
+    const botUser = await response.json();
+
+    console.log(
+      `✅ Botトークン認証成功: ${botUser.username}`
+    );
 
   } catch (error) {
-    console.error('❌ Botトークン認証失敗');
+
+    clearTimeout(timeout);
+
+    console.error(
+      '❌ Discord APIへの接続テスト失敗'
+    );
+
     console.error(error);
+
     return;
   }
 
-  // ② Discord Gatewayへログイン
+  // ============================
+  // Gatewayログイン
+  // ============================
+
   try {
-    console.log('🔍 Discord Gatewayへ接続中...');
+
+    console.log(
+      '🔍 Discord Gatewayへ接続中...'
+    );
 
     await client.login(TOKEN);
 
-    console.log('✅ client.login() 完了');
+    console.log(
+      '✅ client.login() 完了'
+    );
 
   } catch (error) {
-    console.error('❌ Discord Gatewayログイン失敗');
+
+    console.error(
+      '❌ Discord Gatewayログイン失敗'
+    );
+
     console.error(error);
   }
-
-  // ③ 30秒後にもreadyでない場合
-  setTimeout(() => {
-    if (!client.isReady()) {
-      console.error('❌ 30秒経過してもBotがReadyになっていません');
-      console.error('❌ Gateway接続に問題がある可能性があります');
-    }
-  }, 30000);
 }
 
 startDiscordBot();
