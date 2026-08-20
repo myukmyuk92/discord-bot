@@ -73,4 +73,10 @@ app.listen(PORT, () => {
 });
 
 // Discordへログイン
-client.login(TOKEN);
+client.login(TOKEN)
+  .then(() => {
+    console.log('Discordログイン要求成功');
+  })
+  .catch((err) => {
+    console.error('Discordログイン失敗:', err);
+  });
